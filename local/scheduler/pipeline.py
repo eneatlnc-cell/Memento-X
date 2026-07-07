@@ -4,10 +4,12 @@ Memento-X 工作流管道
 封装从云端意图理解到本地工具执行的完整链路。
 """
 import json
+import logging
 import httpx
 from typing import Optional
-from local.scheduler.executor import Scheduler, WorkflowResult, StepResult
+from local.scheduler.executor import Scheduler, WorkflowResult
 
+logger = logging.getLogger(__name__)
 
 CLOUD_API_URL = "http://localhost:8000/api/v1"
 
@@ -24,7 +26,7 @@ class Pipeline:
     def _headers(self) -> dict:
         return {"Authorization": f"Bearer {self.token}"} if self.token else {}
 
-    async def process(self, user_input: str, context: Optional[str] = None) -> WorkflowResult:
+    async def process(self, user_input: str, context: Optional[dict] = None) -> WorkflowResult:
         """
         完整处理流程：用户输入 → 云端意图理解 → 本地执行
 
@@ -49,30 +51,33 @@ class Pipeline:
             intent = response.json()
 
         if not intent.get("success"):
-            return WorkflowResult(success=False, error=intent.get("error", "意图理解失败"))
+            return WorkflowResult(
+                success=False,
+                error=intent.get("error", "意图理解失败"),
+            )
 
         workflow = intent.get("workflow", {})
         understood = intent.get("understood", "")
 
-        print(f"AI 理解: {understood}")
-        print(f"工作流: {json.dumps(workflow, ensure_ascii=False, indent=2)}")
+        logger.info(f"AI 理解: {understood}")
+        logger.debug(f"工作流: {json.dumps(workflow, ensure_ascii=False, indent=2)}")
 
         # 2. 本地执行工作流
         result = await self.scheduler.execute(workflow)
 
         # 3. 回传状态到云端
-        await self._report_status(result)
+        await self._report_status(result, workflow.get("workflow_id", ""))
 
         return result
 
-    async def _report_status(self, result: WorkflowResult):
+    async def _report_status(self, result: WorkflowResult, workflow_id: str):
         """回传执行状态到云端"""
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 await client.post(
                     f"{self.api_base}/intent/status",
                     json={
-                        "workflow_id": "local",
+                        "workflow_id": workflow_id,
                         "status": "completed" if result.success else "failed",
                         "steps": [
                             {
@@ -89,7 +94,7 @@ class Pipeline:
                     headers=self._headers,
                 )
         except Exception as e:
-            print(f"状态回传失败: {e}")
+            logger.warning(f"状态回传失败: {e}")
 
 
 # 全局管道

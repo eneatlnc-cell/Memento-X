@@ -1,137 +1,265 @@
 """
 Memento-X 意图理解引擎
 
-唯一 AI 参与环节：将用户自然语言输入解析为结构化 JSON 工作流。
-使用通义千问 VL-Pro 进行意图理解，输出标准化工作流指令。
+核心链路：
+用户输入 → engine.process() → 调用通义千问VL-Pro → 解析JSON → 验证Schema → 返回工作流JSON
+
+这是 Memento-X 唯一需要 AI 参与的环节。
+AI 只做意图理解，后续所有像素级工作由本地确定性工具完成。
 """
 import json
+import uuid
+import logging
+from datetime import datetime, timezone
 from typing import Optional
+
 from dashscope import Generation
+
 from cloud.config import settings
-from cloud.intent.schema import Workflow, WorkflowStep, IntentResponse
+from cloud.intent.schema_loader import schema_loader
+from cloud.intent.prompts import (
+    build_system_prompt,
+    build_user_prompt,
+    build_correction_prompt,
+)
+
+logger = logging.getLogger(__name__)
 
 
-SYSTEM_PROMPT = """你是 Memento 视频编辑 AI 助手。你的唯一职责是将用户的自然语言视频编辑需求解析为结构化 JSON 工作流。
+# ── 自定义异常 ──
 
-## 可用工具
+class IntentError(Exception):
+    """意图理解失败"""
+    def __init__(self, message: str, raw_output: str = ""):
+        super().__init__(message)
+        self.raw_output = raw_output
 
-| 工具 | 用途 | 参数 |
-|------|------|------|
-| matting | 抠图/人物分离 | target: "person" / "object" / "foreground" |
-| tracking | 遮罩追踪 | target: "mask", fps: 24 |
-| replace | 替换元素 | target: "person" / "background" / "object", with: 描述 |
-| composite | 合成帧序列 | format: "prores" / "h264", resolution: "4k" / "1080p" |
-| color_grade | 调色 | style: "cinematic" / "warm" / "cool" / "vintage" |
-| subtitle | 添加字幕 | text: 字幕内容, style: "bottom" / "karaoke" |
-| effect | 特效 | type: "fire" / "particle" / "glow" / "transition" |
-| crop | 裁剪 | aspect: "16:9" / "9:16" / "1:1", resolution: "4k" / "1080p" |
-| stabilize | 防抖 | strength: "light" / "medium" / "strong" |
-| denoise | 降噪 | strength: "light" / "medium" / "strong" |
 
-## 输出格式
+class SchemaValidationError(IntentError):
+    """AI 输出不符合 Schema"""
+    def __init__(self, message: str, errors: list[str], raw_output: str = ""):
+        super().__init__(message, raw_output)
+        self.errors = errors
 
-必须严格输出以下 JSON 格式，不要包含任何其他文字：
 
-{
-  "understood": "你对用户意图的简短理解",
-  "steps": [
-    {"action": "工具名", "target": "目标", "params": {}, "reason": "为什么需要这一步"}
-  ]
-}
+class ApiError(IntentError):
+    """通义千问 API 调用失败"""
+    def __init__(self, message: str, status_code: int = 0):
+        super().__init__(message)
+        self.status_code = status_code
 
-## 规则
-1. 只在上述工具列表中选择 action
-2. 步骤顺序必须合理（先抠图再替换再合成）
-3. 如果用户需求涉及人物替换，必须包含 matting → tracking → replace → composite
-4. 如果用户提到了特定风格，在 color_grade 中体现
-5. 不要添加任何工具列表中没有的操作
-6. 输出必须是合法 JSON，不要包含 markdown 代码块标记"""
 
+# ── 意图理解引擎 ──
 
 class IntentEngine:
-    """AI 意图理解引擎"""
+    """
+    AI 意图理解引擎。
 
-    def __init__(self):
-        self.api_key = settings.dashscope_api_key
+    将用户自然语言视频编辑指令解析为符合 schema/workflow.json 的结构化工作流。
 
-    async def understand(self, user_input: str, context: Optional[str] = None) -> IntentResponse:
+    使用方式：
+        engine = IntentEngine()
+        workflow = engine.process("把人物换成钢铁侠")
+    """
+
+    def __init__(self, api_key: Optional[str] = None):
         """
-        将用户自然语言输入解析为结构化工作流。
+        初始化引擎。
 
         Args:
-            user_input: 用户自然语言输入
-            context: 可选的上下文（如当前项目信息）
+            api_key: 通义千问 API Key，默认从环境变量 DASHSCOPE_API_KEY 读取
+        """
+        self.api_key = api_key or settings.dashscope_api_key
+        self.model = settings.intent_model
+        self.temperature = settings.intent_temperature
+        self.max_tokens = settings.intent_max_tokens
+        self.max_retries = settings.intent_max_retries
+
+        # 确保 Schema 已加载
+        _ = schema_loader.schema
+
+        if not self.api_key:
+            logger.warning("DASHSCOPE_API_KEY 未配置，引擎将无法调用 AI")
+
+    def process(self, user_input: str, context: dict | None = None) -> dict:
+        """
+        处理用户输入，返回工作流 JSON。
+
+        Args:
+            user_input: 用户自然语言指令，如"把画面中的人物换成钢铁侠，背景改成火星"
+            context: 可选上下文，如 {"project_name": "test", "resolution": "4k"}
 
         Returns:
-            IntentResponse: 包含理解结果和工作流步骤
+            dict: 符合 schema/workflow.json 的完整工作流 JSON
+
+        Raises:
+            IntentError: 意图理解失败
+            SchemaValidationError: AI 输出不符合 Schema
+            ApiError: API 调用失败
         """
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        if not user_input or not user_input.strip():
+            raise IntentError("用户输入为空")
 
-        if context:
-            messages.append({"role": "system", "content": f"当前项目上下文：{context}"})
+        logger.info(f"收到意图理解请求: '{user_input[:100]}{'...' if len(user_input) > 100 else ''}'")
 
-        messages.append({"role": "user", "content": user_input})
+        if not self.api_key:
+            raise ApiError("DASHSCOPE_API_KEY 未配置，请设置环境变量 DASHSCOPE_API_KEY")
 
-        try:
-            response = Generation.call(
-                api_key=self.api_key,
-                model="qwen-vl-pro",
-                messages=messages,
-                result_format="message",
-                temperature=0.1,  # 低温度确保输出稳定
-                max_tokens=2000,
-            )
+        # 构建 prompt
+        system_prompt = build_system_prompt()
+        user_prompt = build_user_prompt(user_input, context)
 
-            if response.status_code != 200:
-                return IntentResponse(
-                    success=False,
-                    error=f"API 调用失败: {response.message}",
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        raw_output = ""
+        retry_count = 0
+
+        while retry_count <= self.max_retries:
+            try:
+                # ── 调用通义千问 VL-Pro ──
+                response = Generation.call(
+                    api_key=self.api_key,
+                    model=self.model,
+                    messages=messages,
+                    result_format="message",
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
                 )
 
-            raw_output = response.output.choices[0].message.content
+                if response.status_code != 200:
+                    raise ApiError(
+                        f"API 调用失败 (HTTP {response.status_code}): {response.message}",
+                        status_code=response.status_code,
+                    )
 
-            # 清理可能的 markdown 代码块标记
-            raw_output = raw_output.strip()
-            if raw_output.startswith("```"):
-                raw_output = raw_output.split("\n", 1)[1]
-                if raw_output.endswith("```"):
-                    raw_output = raw_output[:-3]
-                raw_output = raw_output.strip()
+                raw_output = response.output.choices[0].message.content
+                logger.debug(f"AI 原始输出 ({len(raw_output)} 字符)")
 
-            parsed = json.loads(raw_output)
+                # ── 解析 JSON ──
+                parsed = self._parse_json(raw_output)
 
-            steps = []
-            for step_data in parsed.get("steps", []):
-                steps.append(WorkflowStep(
-                    action=step_data["action"],
-                    target=step_data.get("target", ""),
-                    params=step_data.get("params", {}),
-                    reason=step_data.get("reason", ""),
-                ))
+                # ── 注入元数据 ──
+                parsed = self._inject_metadata(parsed, user_input)
 
-            workflow = Workflow(
-                steps=steps,
-                estimated_duration_seconds=len(steps) * 30,  # 粗略估计每步 30 秒
-            )
+                # ── 验证 Schema ──
+                validation_errors = schema_loader.validate(parsed)
+                if not validation_errors:
+                    logger.info(
+                        f"意图理解成功: '{parsed.get('understood', '')}' "
+                        f"({len(parsed.get('steps', []))} 个步骤)"
+                    )
+                    return parsed
 
-            return IntentResponse(
-                success=True,
-                understood=parsed.get("understood", ""),
-                workflow=workflow,
-            )
+                # ── 验证失败，尝试修正 ──
+                if retry_count < self.max_retries:
+                    logger.warning(
+                        f"Schema 验证失败 ({len(validation_errors)} 个错误)，"
+                        f"第 {retry_count + 1}/{self.max_retries} 次重试"
+                    )
+                    for err in validation_errors[:5]:
+                        logger.warning(f"  - {err}")
 
-        except json.JSONDecodeError as e:
-            return IntentResponse(
-                success=False,
-                error=f"AI 输出解析失败: {str(e)}",
-                raw_output=raw_output if 'raw_output' in dir() else "",
-            )
-        except Exception as e:
-            return IntentResponse(
-                success=False,
-                error=f"意图理解失败: {str(e)}",
-            )
+                    # 构建修正 prompt
+                    correction = build_correction_prompt(raw_output, validation_errors)
+                    messages.append({"role": "assistant", "content": raw_output})
+                    messages.append({"role": "user", "content": correction})
+                else:
+                    # 重试次数用完
+                    raise SchemaValidationError(
+                        f"AI 输出不符合 Schema（{len(validation_errors)} 个错误，已重试 {self.max_retries} 次）",
+                        errors=validation_errors,
+                        raw_output=raw_output,
+                    )
+
+                retry_count += 1
+
+            except ApiError:
+                raise
+            except SchemaValidationError:
+                raise
+            except json.JSONDecodeError as e:
+                if retry_count < self.max_retries:
+                    logger.warning(f"JSON 解析失败，第 {retry_count + 1}/{self.max_retries} 次重试: {e}")
+                    correction = f"你的上一次输出不是合法 JSON。请确保输出纯 JSON 格式，不要包含 markdown 代码块标记。\n\n错误: {e.msg}"
+                    messages.append({"role": "assistant", "content": raw_output})
+                    messages.append({"role": "user", "content": correction})
+                    retry_count += 1
+                else:
+                    raise IntentError(
+                        f"AI 输出 JSON 解析失败（已重试 {self.max_retries} 次）: {e.msg}",
+                        raw_output=raw_output,
+                    )
+            except Exception as e:
+                raise IntentError(f"意图理解失败: {str(e)}", raw_output=raw_output)
+
+        # 不应该到这里
+        raise IntentError("意图理解失败，原因未知")
+
+    def _parse_json(self, raw_output: str) -> dict:
+        """
+        解析 AI 输出的 JSON。
+
+        处理常见格式问题：
+        - markdown 代码块标记 (```json ... ```)
+        - 前导/尾随空白
+        - BOM 字符
+        """
+        text = raw_output.strip()
+
+        # 移除 BOM
+        if text.startswith("\ufeff"):
+            text = text[1:]
+
+        # 移除 markdown 代码块标记
+        if text.startswith("```"):
+            # 找到第一个换行后的内容
+            first_newline = text.find("\n")
+            if first_newline != -1:
+                text = text[first_newline + 1:]
+            # 移除结尾的 ```
+            if text.rstrip().endswith("```"):
+                text = text.rstrip()[:-3]
+
+        text = text.strip()
+
+        # 如果 AI 在前面加了说明文字，尝试提取 JSON 部分
+        if not text.startswith("{"):
+            brace_start = text.find("{")
+            if brace_start != -1:
+                brace_end = text.rfind("}")
+                if brace_end != -1:
+                    text = text[brace_start:brace_end + 1]
+
+        return json.loads(text)
+
+    def _inject_metadata(self, parsed: dict, user_input: str) -> dict:
+        """
+        注入/修正元数据字段。
+
+        确保 version、workflow_id、created_at 等字段存在且正确。
+        """
+        # version
+        if "version" not in parsed:
+            parsed["version"] = "1.0"
+
+        # workflow_id（UUID v4）
+        if "workflow_id" not in parsed or not parsed["workflow_id"]:
+            parsed["workflow_id"] = str(uuid.uuid4())
+
+        # created_at
+        if "created_at" not in parsed:
+            parsed["created_at"] = datetime.now(timezone.utc).isoformat()
+
+        # 确保每个 step 有 id
+        for i, step in enumerate(parsed.get("steps", [])):
+            if "id" not in step or not step["id"]:
+                step["id"] = f"step_{i + 1}"
+
+        return parsed
 
 
-# 全局引擎实例
+# ── 全局引擎实例 ──
 engine = IntentEngine()
