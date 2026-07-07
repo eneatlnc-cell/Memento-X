@@ -3,6 +3,11 @@ Memento-X 意图理解 Prompt 模板
 
 动态构建 System Prompt 和 User Prompt，
 工具列表和参数约束从 schema/workflow.json 自动提取。
+
+素材库引用：
+- 用户已上传的素材通过 assets 参数注入 User Prompt
+- AI 在生成工作流时用 asset_id 引用已有素材
+- AI 不负责素材管理（创建/修改/删除），只负责"引用"
 """
 import json
 from cloud.intent.schema_loader import schema_loader
@@ -14,18 +19,10 @@ def _build_tool_table() -> str:
     if not tool_names:
         return "（Schema 未加载，无可用工具）"
 
-    # 工具中文名映射
     name_map = {
-        "matting": "抠图",
-        "track": "追踪",
-        "replace": "替换",
-        "composite": "合成",
-        "effect": "特效",
-        "color": "调色",
-        "subtitle": "字幕",
-        "render": "渲染",
-        "crop": "裁剪",
-        "export": "导出",
+        "matting": "抠图", "track": "追踪", "replace": "替换",
+        "composite": "合成", "effect": "特效", "color": "调色",
+        "subtitle": "字幕", "render": "渲染", "crop": "裁剪", "export": "导出",
     }
 
     lines = ["| action | 工具 | 说明 | 关键参数 |",
@@ -36,15 +33,10 @@ def _build_tool_table() -> str:
         params_def = schema_loader.get_tool_params(tool)
         props = params_def.get("properties", {})
 
-        # 提取关键参数（前 4 个，带默认值）
         key_params = []
         for pname, pdef in list(props.items())[:4]:
-            desc = pdef.get("description", pname)
             default = pdef.get("default", "")
-            if default:
-                key_params.append(f"{pname}={default}")
-            else:
-                key_params.append(pname)
+            key_params.append(f"{pname}={default}" if default else pname)
 
         param_str = ", ".join(key_params) if key_params else "—"
         desc = params_def.get("title", tool)
@@ -75,17 +67,34 @@ def _build_tool_params_detail() -> str:
             ptype = pdef.get("type", "string")
             default = pdef.get("default", "—")
             desc = pdef.get("description", "")
-
-            # 如果有枚举值，加到说明里
             enum_vals = pdef.get("enum")
             if enum_vals:
                 desc += f"（可选: {', '.join(str(v) for v in enum_vals)}）"
-
             lines.append(f"| {pname} | {ptype} | {default} | {desc} |")
 
         sections.append("\n".join(lines))
 
     return "\n".join(sections)
+
+
+def _build_asset_library_rules() -> str:
+    """构建素材库引用规则"""
+    return """## 素材库引用规则
+
+用户可能已经上传了一些素材。每个素材有唯一 asset_id。
+当用户指令中提到某个角色/场景/物体时，你需要：
+1. 检查素材库中是否有匹配项（通过名称、类型匹配）
+2. 有匹配 → 在 replace 步骤的 params 中使用 asset_id 引用
+3. 无匹配 → 在 params 中设置 "asset_id": null, "requires_download": true, "missing_asset": "素材名称"
+
+### asset_id 的正确使用
+- 如果素材库中有"钢铁侠战甲"（asset_001），用户说"换成钢铁侠" → 设置 asset_id: "asset_001"
+- 如果素材库中没有匹配 → 设置 asset_id: null, requires_download: true
+
+### 你的边界
+- ✅ 你能做：读取素材列表 → 匹配用户指令 → 在输出中使用 asset_id
+- ❌ 你不能做：添加素材、删除素材、修改素材路径、捏造不存在的 asset_id
+- 不允许使用任何不在素材列表中的 asset_id"""
 
 
 def build_system_prompt() -> str:
@@ -98,12 +107,15 @@ def build_system_prompt() -> str:
     tool_table = _build_tool_table()
     target_values = schema_loader.get_target_values()
     tool_names = schema_loader.get_tool_names()
+    asset_rules = _build_asset_library_rules()
 
     return f"""你是 Memento-X 的视频编辑 AI 意图理解引擎。你的唯一职责是将用户的自然语言视频编辑需求解析为结构化 JSON 工作流。
 
 ## 可用工具（共 {len(tool_names)} 种）
 
 {tool_table}
+
+{asset_rules}
 
 ## 步骤通用字段
 
@@ -155,19 +167,42 @@ def build_system_prompt() -> str:
 - [ ] 每个 step 的 target 在允许值列表中
 - [ ] depends_on 引用的 id 必须存在于前面的步骤中
 - [ ] 最后一步是 export（除非用户明确不要导出）
+- [ ] replace 步骤正确使用了 asset_id 或 requires_download
 - [ ] 输出是纯 JSON，不含 markdown 标记"""
 
 
-def build_user_prompt(user_input: str, context: dict | None = None) -> str:
+def build_user_prompt(user_input: str, context: dict | None = None,
+                      assets: list | None = None) -> str:
     """
     构建 User Prompt。
 
     Args:
         user_input: 用户自然语言指令
         context: 可选的上下文信息
+        assets: 可选的素材列表，格式：
+            [{"id": "asset_001", "name": "钢铁侠战甲", "type": "character", "path": "/assets/ironman.png"}]
     """
     parts = []
 
+    # ── 素材库 ──
+    if assets:
+        parts.append("## 用户已上传的素材库")
+        parts.append("以下素材已经由用户上传到本地，你可以通过 asset_id 引用它们：")
+        parts.append("")
+        parts.append("| asset_id | 名称 | 类型 | 文件路径 |")
+        parts.append("|----------|------|------|----------|")
+        for a in assets:
+            aid = a.get("id", "?")
+            name = a.get("name", "?")
+            atype = a.get("type", "?")
+            path = a.get("path", "?")
+            parts.append(f"| {aid} | {name} | {atype} | {path} |")
+        parts.append("")
+        parts.append("**重要**：如果用户指令中提到的角色/场景/物体在素材库中有匹配，你必须在 replace 步骤的 params 中使用对应的 asset_id。")
+        parts.append("如果素材库中没有匹配，设置 asset_id: null, requires_download: true, missing_asset: 用户需要的素材名称。")
+        parts.append("")
+
+    # ── 上下文 ──
     if context:
         parts.append("## 上下文信息")
         if context.get("project_name"):
@@ -180,6 +215,7 @@ def build_user_prompt(user_input: str, context: dict | None = None) -> str:
             parts.append(f"已安装工具: {', '.join(context['available_tools'])}")
         parts.append("")
 
+    # ── 用户指令 ──
     parts.append("## 用户指令")
     parts.append(user_input)
     parts.append("")
@@ -196,7 +232,7 @@ def build_correction_prompt(original_output: str, validation_errors: list[str]) 
         original_output: AI 上次的原始输出
         validation_errors: jsonschema 验证错误列表
     """
-    errors_text = "\n".join(f"- {e}" for e in validation_errors[:10])  # 最多显示 10 个错误
+    errors_text = "\n".join(f"- {e}" for e in validation_errors[:10])
 
     return f"""你的上一次输出不符合 Schema 规范，请修正以下错误后重新输出。
 
@@ -213,5 +249,6 @@ def build_correction_prompt(original_output: str, validation_errors: list[str]) 
 1. 只修正错误，不要改变工作流逻辑
 2. 确保输出是纯 JSON，不含 markdown 标记
 3. 确保所有字段名和值符合 Schema 约束
+4. 确保 asset_id 是素材库中存在的 ID，或为 null
 
 请输出修正后的工作流 JSON："""

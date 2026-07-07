@@ -220,8 +220,23 @@
       "properties": {
         "source": {
           "type": "string",
-          "description": "替换源：角色名/场景描述/素材路径",
+          "description": "替换源描述：角色名/场景名/文本描述（人类可读，用于UI显示）",
           "maxLength": 500
+        },
+        "asset_id": {
+          "type": "string",
+          "description": "引用素材库中的素材ID。如果用户指令中提到的内容在素材库中有匹配，填入对应 asset_id；无匹配则设为 null",
+          "default": null
+        },
+        "requires_download": {
+          "type": "boolean",
+          "description": "当 asset_id 为 null 时，是否需要用户上传素材。true=调度器应提示用户上传，false=AI自行生成",
+          "default": false
+        },
+        "missing_asset": {
+          "type": "string",
+          "description": "当 requires_download=true 时，需要用户上传的素材名称（用于友好提示）",
+          "default": ""
         },
         "style": {
           "type": "string",
@@ -231,7 +246,7 @@
         },
         "reference_image": {
           "type": "string",
-          "description": "参考图片路径（可选，用于精确匹配风格）",
+          "description": "参考图片路径（可选，用于精确匹配风格）。优先使用 asset_id 对应的素材路径",
           "default": ""
         },
         "blend_strength": {

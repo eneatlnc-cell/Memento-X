@@ -52,6 +52,14 @@ class IntentResponse(BaseModel):
     retry_count: int = Field(default=0, description="重试次数")
 
 
+class AssetRef(BaseModel):
+    """素材库中的素材引用"""
+    id: str = Field(..., description="素材唯一标识，如 asset_001")
+    name: str = Field(..., description="素材名称，如'钢铁侠战甲'")
+    type: str = Field(default="character", description="素材类型: character/background/object/effect")
+    path: str = Field(..., description="素材文件路径")
+
+
 class IntentRequest(BaseModel):
     """意图理解请求"""
     input: str = Field(
@@ -59,6 +67,10 @@ class IntentRequest(BaseModel):
         description="用户自然语言输入",
         min_length=1,
         max_length=2000,
+    )
+    assets: Optional[List[AssetRef]] = Field(
+        default=None,
+        description="当前项目的素材列表（用户已上传）。AI 只负责引用，不负责管理。",
     )
     context: Optional[Dict[str, Any]] = Field(
         default=None,
