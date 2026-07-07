@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://memento-x.dev/schema/workflow.json",
+  "title": "Memento-X 工作流指令",
+  "description": "云端 AI 意图理解引擎输出的标准化工作流 JSON Schema",
+  "type": "object",
+  "required": ["steps"],
+  "properties": {
+    "understood": {
+      "type": "string",
+      "description": "AI 对用户意图的简短理解"
+    },
+    "steps": {
+      "type": "array",
+      "description": "按顺序执行的工作流步骤",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/Step"
+      }
+    }
+  },
+  "definitions": {
+    "Step": {
+      "type": "object",
+      "required": ["action"],
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "matting",
+            "tracking",
+            "replace",
+            "composite",
+            "color_grade",
+            "subtitle",
+            "effect",
+            "crop",
+            "stabilize",
+            "denoise"
+          ],
+          "description": "工具名称"
+        },
+        "target": {
+          "type": "string",
+          "description": "操作目标: person / background / object / foreground / mask"
+        },
+        "params": {
+          "type": "object",
+          "description": "工具参数"
+        },
+        "reason": {
+          "type": "string",
+          "description": "为什么需要这一步"
+        }
+      }
+    }
+  }
+}

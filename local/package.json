@@ -1,0 +1,21 @@
+{
+  "name": "memento-x",
+  "version": "0.1.0",
+  "description": "Memento-X — AI 视频编辑工具",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:electron\" \"npm run dev:ui\"",
+    "dev:electron": "electron .",
+    "dev:ui": "cd ui && npm run dev",
+    "build": "cd ui && npm run build && electron-builder",
+    "postinstall": "cd ui && npm install"
+  },
+  "dependencies": {
+    "electron-store": "^8.1.0"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.0",
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.0"
+  }
+}
