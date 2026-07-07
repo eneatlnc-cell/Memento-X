@@ -1,58 +1,697 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://memento-x.dev/schema/workflow.json",
+  "$id": "https://memento-x.dev/schema/workflow-v1.json",
   "title": "Memento-X 工作流指令",
-  "description": "云端 AI 意图理解引擎输出的标准化工作流 JSON Schema",
+  "description": "云端 AI 意图理解引擎输出的标准化工作流 JSON 格式。\nAI 将用户自然语言解析为此格式，本地调度器按此格式解析并执行。\n\n设计原则：\n- 确定性：相同输入 → 相同输出\n- 可组合：多步骤通过 depends_on 建立依赖 DAG\n- 可追溯：每步有唯一 id + reason\n- 可调试：JSON 人类可读，可直接手工编辑",
   "type": "object",
-  "required": ["steps"],
+  "required": ["version", "workflow_id", "steps"],
   "properties": {
+    "version": {
+      "type": "string",
+      "const": "1.0",
+      "description": "Schema 版本号，当前固定为 1.0"
+    },
+    "workflow_id": {
+      "type": "string",
+      "description": "工作流唯一标识 (UUID v4)",
+      "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$"
+    },
     "understood": {
       "type": "string",
-      "description": "AI 对用户意图的简短理解"
+      "description": "AI 对用户意图的简短理解（用于 UI 确认展示）",
+      "maxLength": 200
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "工作流创建时间 (ISO 8601)"
     },
     "steps": {
       "type": "array",
-      "description": "按顺序执行的工作流步骤",
+      "description": "按拓扑顺序排列的工作流步骤。调度器按顺序提交，但通过 depends_on 控制实际执行顺序。",
       "minItems": 1,
+      "maxItems": 50,
       "items": {
         "$ref": "#/definitions/Step"
       }
     }
   },
+
   "definitions": {
     "Step": {
       "type": "object",
-      "required": ["action"],
+      "required": ["id", "action", "target", "params"],
       "properties": {
+        "id": {
+          "type": "string",
+          "description": "步骤唯一标识，如 step_1、matting_main。在 depends_on 中引用。",
+          "pattern": "^[a-zA-Z0-9_-]+$",
+          "minLength": 1,
+          "maxLength": 64
+        },
         "action": {
           "type": "string",
+          "description": "工具类型，必须是 10 种工具之一",
           "enum": [
             "matting",
-            "tracking",
+            "track",
             "replace",
             "composite",
-            "color_grade",
-            "subtitle",
             "effect",
+            "color",
+            "subtitle",
+            "render",
             "crop",
-            "stabilize",
-            "denoise"
-          ],
-          "description": "工具名称"
+            "export"
+          ]
         },
         "target": {
           "type": "string",
-          "description": "操作目标: person / background / object / foreground / mask"
+          "description": "操作目标",
+          "enum": ["person", "background", "object", "foreground", "scene", "all", "mask", "region"],
+          "default": "all"
         },
         "params": {
           "type": "object",
-          "description": "工具参数"
+          "description": "工具参数。根据 action 不同，params 结构不同。详见各工具的 params Schema。",
+          "oneOf": [
+            {"$ref": "#/definitions/MattingParams"},
+            {"$ref": "#/definitions/TrackParams"},
+            {"$ref": "#/definitions/ReplaceParams"},
+            {"$ref": "#/definitions/CompositeParams"},
+            {"$ref": "#/definitions/EffectParams"},
+            {"$ref": "#/definitions/ColorParams"},
+            {"$ref": "#/definitions/SubtitleParams"},
+            {"$ref": "#/definitions/RenderParams"},
+            {"$ref": "#/definitions/CropParams"},
+            {"$ref": "#/definitions/ExportParams"}
+          ]
+        },
+        "depends_on": {
+          "type": "array",
+          "description": "依赖的前置步骤 ID 列表。空数组或无此字段表示无依赖，可立即执行。",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "fallback": {
+          "type": "object",
+          "description": "该步骤失败时的降级方案",
+          "properties": {
+            "action": {
+              "type": "string",
+              "description": "降级使用哪个工具（如 matting 失败时降级为 approximate）"
+            },
+            "params": {
+              "type": "object",
+              "description": "降级时的参数"
+            },
+            "retry_count": {
+              "type": "integer",
+              "description": "失败后重试次数",
+              "default": 0,
+              "minimum": 0,
+              "maximum": 3
+            }
+          }
         },
         "reason": {
           "type": "string",
-          "description": "为什么需要这一步"
+          "description": "AI 解释为什么需要这一步（用于调试和用户确认）",
+          "maxLength": 200
         }
-      }
+      },
+      "additionalProperties": false
+    },
+
+    "MattingParams": {
+      "title": "抠图参数",
+      "type": "object",
+      "required": [],
+      "properties": {
+        "threshold": {
+          "type": "number",
+          "description": "抠图置信度阈值 (0.0-1.0)，越高越保守",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.5
+        },
+        "refine_edge": {
+          "type": "boolean",
+          "description": "是否启用边缘细化（更平滑但更慢）",
+          "default": true
+        },
+        "output_format": {
+          "type": "string",
+          "enum": ["png", "webp", "matte"],
+          "description": "输出格式：png=透明背景, webp=压缩, matte=灰度遮罩",
+          "default": "png"
+        },
+        "model": {
+          "type": "string",
+          "enum": ["birefnet", "sam2", "auto"],
+          "description": "抠图模型：birefnet=通用, sam2=视频, auto=自动选择",
+          "default": "auto"
+        },
+        "dilate_px": {
+          "type": "integer",
+          "description": "遮罩膨胀像素数（正值扩大遮罩）",
+          "default": 0,
+          "minimum": -10,
+          "maximum": 20
+        },
+        "blur_px": {
+          "type": "integer",
+          "description": "遮罩边缘模糊像素数",
+          "default": 2,
+          "minimum": 0,
+          "maximum": 10
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "TrackParams": {
+      "title": "追踪参数",
+      "type": "object",
+      "required": [],
+      "properties": {
+        "fps": {
+          "type": "integer",
+          "description": "追踪帧率，默认 24。越低越快但精度下降",
+          "default": 24,
+          "minimum": 1,
+          "maximum": 60
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["mask", "point", "box"],
+          "description": "追踪模式：mask=逐像素遮罩, point=关键点, box=矩形框",
+          "default": "mask"
+        },
+        "propagate": {
+          "type": "boolean",
+          "description": "是否将追踪结果传播到后续帧（双向传播）",
+          "default": true
+        },
+        "max_gap_frames": {
+          "type": "integer",
+          "description": "追踪失败时最多回溯帧数",
+          "default": 10,
+          "minimum": 0,
+          "maximum": 120
+        },
+        "confidence_threshold": {
+          "type": "number",
+          "description": "追踪置信度阈值，低于此值视为失败",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.7
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "ReplaceParams": {
+      "title": "替换参数",
+      "type": "object",
+      "required": [],
+      "properties": {
+        "source": {
+          "type": "string",
+          "description": "替换源：角色名/场景描述/素材路径",
+          "maxLength": 500
+        },
+        "style": {
+          "type": "string",
+          "enum": ["cinematic", "anime", "realistic", "minimal", "vintage", "sci-fi", "fantasy"],
+          "description": "替换风格",
+          "default": "cinematic"
+        },
+        "reference_image": {
+          "type": "string",
+          "description": "参考图片路径（可选，用于精确匹配风格）",
+          "default": ""
+        },
+        "blend_strength": {
+          "type": "number",
+          "description": "融合强度 (0.0-1.0)，1.0=完全替换，0.5=半透明叠加",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.95
+        },
+        "preserve_lighting": {
+          "type": "boolean",
+          "description": "是否保留原始光照/阴影信息",
+          "default": true
+        },
+        "scale_mode": {
+          "type": "string",
+          "enum": ["fit", "fill", "stretch", "auto"],
+          "description": "缩放模式",
+          "default": "auto"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "CompositeParams": {
+      "title": "合成参数",
+      "type": "object",
+      "required": [],
+      "properties": {
+        "layers": {
+          "type": "array",
+          "description": "图层列表（按堆叠顺序，第一层为底层）",
+          "items": {
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "string",
+                "description": "图层来源：step_id 表示使用某步骤的输出"
+              },
+              "blend_mode": {
+                "type": "string",
+                "enum": ["normal", "multiply", "screen", "overlay", "add", "alpha"],
+                "default": "normal"
+              },
+              "opacity": {
+                "type": "number",
+                "minimum": 0.0,
+                "maximum": 1.0,
+                "default": 1.0
+              },
+              "position": {
+                "type": "object",
+                "description": "图层位置偏移",
+                "properties": {
+                  "x": {"type": "integer", "default": 0},
+                  "y": {"type": "integer", "default": 0}
+                }
+              }
+            }
+          },
+          "default": []
+        },
+        "blend_mode": {
+          "type": "string",
+          "enum": ["normal", "multiply", "screen", "overlay", "add", "alpha"],
+          "description": "全局混合模式",
+          "default": "normal"
+        },
+        "output_fps": {
+          "type": "integer",
+          "description": "输出帧率",
+          "default": 24,
+          "minimum": 1,
+          "maximum": 120
+        },
+        "resolution": {
+          "type": "string",
+          "enum": ["4k", "1080p", "720p", "source"],
+          "description": "输出分辨率：source=保持原始分辨率",
+          "default": "source"
+        },
+        "anti_alias": {
+          "type": "boolean",
+          "description": "是否启用抗锯齿",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "EffectParams": {
+      "title": "特效参数",
+      "type": "object",
+      "required": [],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["fire", "particle", "glow", "transition", "lightning", "smoke", "water", "magic"],
+          "description": "特效类型",
+          "default": "particle"
+        },
+        "intensity": {
+          "type": "number",
+          "description": "特效强度 (0.0-1.0)",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.7
+        },
+        "position": {
+          "type": "string",
+          "enum": ["top", "bottom", "center", "full", "left", "right"],
+          "description": "特效位置",
+          "default": "full"
+        },
+        "duration_frames": {
+          "type": "integer",
+          "description": "特效持续帧数（0=全程）",
+          "default": 0,
+          "minimum": 0
+        },
+        "start_frame": {
+          "type": "integer",
+          "description": "特效起始帧（从 0 开始）",
+          "default": 0,
+          "minimum": 0
+        },
+        "color": {
+          "type": "string",
+          "description": "特效主色调 (hex)",
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "default": "#ff6600"
+        },
+        "seed": {
+          "type": "integer",
+          "description": "随机种子（相同种子产生相同效果，确定性）",
+          "default": 42
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "ColorParams": {
+      "title": "调色参数",
+      "type": "object",
+      "required": [],
+      "properties": {
+        "style": {
+          "type": "string",
+          "enum": ["cinematic", "warm", "cool", "vintage", "noir", "pastel", "vivid", "custom"],
+          "description": "调色风格预设",
+          "default": "cinematic"
+        },
+        "lut": {
+          "type": "string",
+          "description": "自定义 LUT 文件路径（仅 style=custom 时生效）",
+          "default": ""
+        },
+        "brightness": {
+          "type": "number",
+          "description": "亮度调整 (-1.0 ~ 1.0)",
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "default": 0.0
+        },
+        "contrast": {
+          "type": "number",
+          "description": "对比度调整 (0.0 ~ 3.0, 1.0=不变)",
+          "minimum": 0.0,
+          "maximum": 3.0,
+          "default": 1.0
+        },
+        "saturation": {
+          "type": "number",
+          "description": "饱和度调整 (0.0 ~ 3.0, 1.0=不变)",
+          "minimum": 0.0,
+          "maximum": 3.0,
+          "default": 1.0
+        },
+        "temperature": {
+          "type": "number",
+          "description": "色温调整 (-1.0=冷色 ~ 1.0=暖色)",
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "default": 0.0
+        },
+        "shadows": {
+          "type": "number",
+          "description": "阴影提亮 (-1.0 ~ 1.0)",
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "default": 0.0
+        },
+        "highlights": {
+          "type": "number",
+          "description": "高光压暗 (-1.0 ~ 1.0)",
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "default": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "SubtitleParams": {
+      "title": "字幕参数",
+      "type": "object",
+      "required": [],
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "字幕文本内容",
+          "maxLength": 2000
+        },
+        "style": {
+          "type": "string",
+          "enum": ["bottom", "top", "karaoke", "title", "caption", "custom"],
+          "description": "字幕样式：bottom=底部, top=顶部, karaoke=卡拉OK, title=大标题, caption=说明文字",
+          "default": "bottom"
+        },
+        "font_size": {
+          "type": "integer",
+          "description": "字体大小 (px)",
+          "default": 36,
+          "minimum": 8,
+          "maximum": 200
+        },
+        "font_family": {
+          "type": "string",
+          "description": "字体名称",
+          "default": "sans-serif"
+        },
+        "color": {
+          "type": "string",
+          "description": "文字颜色 (hex)",
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "default": "#ffffff"
+        },
+        "outline_color": {
+          "type": "string",
+          "description": "描边颜色 (hex)",
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "default": "#000000"
+        },
+        "outline_width": {
+          "type": "integer",
+          "description": "描边宽度 (px)",
+          "default": 2,
+          "minimum": 0,
+          "maximum": 10
+        },
+        "background": {
+          "type": "string",
+          "description": "字幕背景色 (hex, 含透明度如 #00000080)",
+          "pattern": "^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$",
+          "default": ""
+        },
+        "start_frame": {
+          "type": "integer",
+          "description": "字幕出现帧 (0=从头开始)",
+          "default": 0,
+          "minimum": 0
+        },
+        "end_frame": {
+          "type": "integer",
+          "description": "字幕消失帧 (0=持续到结束)",
+          "default": 0,
+          "minimum": 0
+        },
+        "alignment": {
+          "type": "string",
+          "enum": ["left", "center", "right"],
+          "default": "center"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "RenderParams": {
+      "title": "渲染参数",
+      "type": "object",
+      "required": [],
+      "properties": {
+        "source": {
+          "type": "string",
+          "description": "渲染源：HTML/SVG/Markdown 内容字符串，或文件路径",
+          "maxLength": 50000
+        },
+        "source_type": {
+          "type": "string",
+          "enum": ["html", "svg", "markdown", "file"],
+          "description": "源类型",
+          "default": "html"
+        },
+        "format": {
+          "type": "string",
+          "enum": ["png", "jpg", "webp", "mp4", "webm", "gif"],
+          "description": "输出格式",
+          "default": "png"
+        },
+        "width": {
+          "type": "integer",
+          "description": "渲染宽度 (px)",
+          "default": 1920,
+          "minimum": 64,
+          "maximum": 7680
+        },
+        "height": {
+          "type": "integer",
+          "description": "渲染高度 (px)",
+          "default": 1080,
+          "minimum": 64,
+          "maximum": 4320
+        },
+        "fps": {
+          "type": "integer",
+          "description": "视频渲染帧率（仅 format=mp4/webm/gif）",
+          "default": 24,
+          "minimum": 1,
+          "maximum": 60
+        },
+        "duration_seconds": {
+          "type": "number",
+          "description": "视频时长（仅 format=mp4/webm）",
+          "default": 3.0,
+          "minimum": 0.1,
+          "maximum": 300.0
+        },
+        "background": {
+          "type": "string",
+          "description": "背景色 (hex, 含透明度)",
+          "pattern": "^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$",
+          "default": "#00000000"
+        },
+        "quality": {
+          "type": "integer",
+          "description": "输出质量 (1-100)",
+          "default": 90,
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "CropParams": {
+      "title": "裁剪参数",
+      "type": "object",
+      "required": [],
+      "properties": {
+        "aspect": {
+          "type": "string",
+          "enum": ["16:9", "9:16", "1:1", "4:3", "21:9", "3:2", "custom"],
+          "description": "目标宽高比",
+          "default": "16:9"
+        },
+        "resolution": {
+          "type": "string",
+          "enum": ["4k", "1080p", "720p", "source"],
+          "description": "目标分辨率：source=不缩放",
+          "default": "source"
+        },
+        "x": {
+          "type": "integer",
+          "description": "裁剪起始 X（像素，从左上角）",
+          "default": 0,
+          "minimum": 0
+        },
+        "y": {
+          "type": "integer",
+          "description": "裁剪起始 Y（像素，从左上角）",
+          "default": 0,
+          "minimum": 0
+        },
+        "width": {
+          "type": "integer",
+          "description": "裁剪宽度（0=自动计算）",
+          "default": 0,
+          "minimum": 0
+        },
+        "height": {
+          "type": "integer",
+          "description": "裁剪高度（0=自动计算）",
+          "default": 0,
+          "minimum": 0
+        },
+        "position": {
+          "type": "string",
+          "enum": ["center", "top", "bottom", "left", "right", "top-left", "top-right", "bottom-left", "bottom-right"],
+          "description": "裁剪锚点位置（仅 width/height=0 时生效）",
+          "default": "center"
+        },
+        "scale_filter": {
+          "type": "string",
+          "enum": ["lanczos", "bilinear", "bicubic", "nearest"],
+          "description": "缩放算法",
+          "default": "lanczos"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "ExportParams": {
+      "title": "导出参数",
+      "type": "object",
+      "required": [],
+      "properties": {
+        "format": {
+          "type": "string",
+          "enum": ["prores", "h264", "h265", "dnxhd", "gif", "image_sequence"],
+          "description": "导出格式",
+          "default": "h264"
+        },
+        "quality": {
+          "type": "string",
+          "enum": ["lossless", "high", "medium", "low"],
+          "description": "质量等级",
+          "default": "high"
+        },
+        "resolution": {
+          "type": "string",
+          "enum": ["4k", "1080p", "720p", "source"],
+          "description": "输出分辨率",
+          "default": "source"
+        },
+        "bitrate": {
+          "type": "string",
+          "description": "目标码率（如 50M、10M、2000k），为空则自动",
+          "default": "",
+          "pattern": "^$|^\\d+[kKmM]$"
+        },
+        "output_path": {
+          "type": "string",
+          "description": "输出文件路径（为空则使用默认路径）",
+          "default": ""
+        },
+        "include_audio": {
+          "type": "boolean",
+          "description": "是否包含原音频轨道",
+          "default": true
+        },
+        "audio_bitrate": {
+          "type": "string",
+          "description": "音频码率",
+          "default": "256k",
+          "pattern": "^\\d+[kKmM]$"
+        },
+        "color_space": {
+          "type": "string",
+          "enum": ["rec709", "rec2020", "srgb", "display_p3"],
+          "description": "色彩空间",
+          "default": "rec709"
+        },
+        "max_file_size_mb": {
+          "type": "integer",
+          "description": "最大文件大小 (MB)，0=不限制",
+          "default": 0,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
     }
   }
 }
