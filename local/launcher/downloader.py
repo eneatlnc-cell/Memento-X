@@ -39,7 +39,7 @@ TOOL_CATALOG: dict[str, ToolDefinition] = {
     "birefnet": ToolDefinition(
         name="BiRefNet",
         version="2.0",
-        description="高精度图像抠图",
+        description="高精度SVG场景编辑",
         download_url="https://huggingface.co/ZhengPeng7/BiRefNet/resolve/main/BiRefNet-general-bb_swin_v1_tiny-epoch_232.pth",
         sha256="",
         size_bytes=450_000_000,

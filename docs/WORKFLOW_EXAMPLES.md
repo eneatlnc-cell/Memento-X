@@ -13,7 +13,7 @@
   "steps": [
     {
       "id": "step_1",
-      "action": "matting",
+      "action": "scene_edit",
       "target": "person",
       "params": {
         "threshold": 0.5,
@@ -23,7 +23,7 @@
         "dilate_px": 0,
         "blur_px": 2
       },
-      "reason": "先将人物从画面中提取出来，带透明通道"
+      "reason": "提取人物结构化描述，带透明通道"
     },
     {
       "id": "step_2",
@@ -37,7 +37,7 @@
         "scale_mode": "auto"
       },
       "depends_on": ["step_1"],
-      "reason": "将抠出的人物替换为钢铁侠，保留原始光照阴影"
+      "reason": "将提取的人物替换为钢铁侠，保留原始光照阴影"
     },
     {
       "id": "step_3",
@@ -104,9 +104,9 @@
 
 **依赖 DAG：**
 ```
-step_1 (matting) ──┬── step_2 (replace person) ──┐
-                   │                              ├── step_4 (effect) ── step_5 (composite) ── step_6 (export)
-                   └── step_3 (replace bg) ───────┘
+step_1 (scene_edit) ──┬── step_2 (replace person) ──┐
+                      │                              ├── step_4 (effect) ── step_5 (composite) ── step_6 (export)
+                      └── step_3 (replace bg) ───────┘
 ```
 
 ---
@@ -123,8 +123,8 @@ step_1 (matting) ──┬── step_2 (replace person) ──┐
   "created_at": "2026-07-07T10:30:00Z",
   "steps": [
     {
-      "id": "matting_left",
-      "action": "matting",
+      "id": "scene_edit_left",
+      "action": "scene_edit",
       "target": "person",
       "params": {
         "threshold": 0.55,
@@ -133,11 +133,11 @@ step_1 (matting) ──┬── step_2 (replace person) ──┐
         "dilate_px": 1,
         "blur_px": 2
       },
-      "reason": "抠出左侧人物"
+      "reason": "提取左侧人物结构化描述"
     },
     {
-      "id": "matting_right",
-      "action": "matting",
+      "id": "scene_edit_right",
+      "action": "scene_edit",
       "target": "person",
       "params": {
         "threshold": 0.55,
@@ -146,7 +146,7 @@ step_1 (matting) ──┬── step_2 (replace person) ──┐
         "dilate_px": 1,
         "blur_px": 2
       },
-      "reason": "抠出右侧人物，与左侧并行处理"
+      "reason": "提取右侧人物结构化描述，与左侧并行处理"
     },
     {
       "id": "replace_spiderman",
@@ -158,7 +158,7 @@ step_1 (matting) ──┬── step_2 (replace person) ──┐
         "blend_strength": 0.9,
         "preserve_lighting": true
       },
-      "depends_on": ["matting_left"],
+      "depends_on": ["scene_edit_left"],
       "reason": "替换左侧人物为蜘蛛侠"
     },
     {
@@ -171,7 +171,7 @@ step_1 (matting) ──┬── step_2 (replace person) ──┐
         "blend_strength": 0.9,
         "preserve_lighting": true
       },
-      "depends_on": ["matting_right"],
+      "depends_on": ["scene_edit_right"],
       "reason": "替换右侧人物为奇异博士"
     },
     {
@@ -243,9 +243,9 @@ step_1 (matting) ──┬── step_2 (replace person) ──┐
 
 **依赖 DAG：**
 ```
-matting_left ── replace_spiderman ──┐
-                                    ├── composite_chars ── color_grade ── add_title ── export_final
-matting_right ── replace_strange ───┘
+scene_edit_left ── replace_spiderman ──┐
+                                       ├── composite_chars ── color_grade ── add_title ── export_final
+scene_edit_right ── replace_strange ───┘
 ```
 
 ---
@@ -377,7 +377,7 @@ matting_right ── replace_strange ───┘
 
 ---
 
-## 示例 5：完整后期流程（抠图+追踪+替换+调色+字幕+导出）
+## 示例 5：完整后期流程（场景编辑+追踪+替换+调色+字幕+导出）
 
 用户输入："把主角换成超人，全程追踪，调成电影暖色调，加字幕'MAN OF STEEL'，导出4K ProRes"
 
@@ -389,8 +389,8 @@ matting_right ── replace_strange ───┘
   "created_at": "2026-07-07T12:00:00Z",
   "steps": [
     {
-      "id": "matting_hero",
-      "action": "matting",
+      "id": "scene_edit_hero",
+      "action": "scene_edit",
       "target": "person",
       "params": {
         "threshold": 0.45,
@@ -399,7 +399,7 @@ matting_right ── replace_strange ───┘
         "dilate_px": 0,
         "blur_px": 3
       },
-      "reason": "用SAM2抠出主角（视频处理首选）"
+      "reason": "用SAM2提取主角结构化描述（视频处理首选）"
     },
     {
       "id": "track_hero",
@@ -412,7 +412,7 @@ matting_right ── replace_strange ───┘
         "max_gap_frames": 10,
         "confidence_threshold": 0.7
       },
-      "depends_on": ["matting_hero"],
+      "depends_on": ["scene_edit_hero"],
       "reason": "对主角遮罩进行逐帧追踪"
     },
     {
@@ -485,7 +485,7 @@ matting_right ── replace_strange ───┘
 
 **依赖 DAG：**
 ```
-matting_hero ── track_hero ── replace_superman ── color_warm ── subtitle_steel ── export_4k
+scene_edit_hero ── track_hero ── replace_superman ── color_warm ── subtitle_steel ── export_4k
 ```
 
 ---
@@ -500,4 +500,4 @@ matting_hero ── track_hero ── replace_superman ── color_warm ── 
 | HTML渲染 | 3 | 30秒-1分钟 | ~0.01 元 |
 | 完整后期 | 6 | 3-5 分钟 | ~0.02 元 |
 
-所有像素级操作（抠图/追踪/替换/特效/合成/调色/导出）均为本地确定性工具执行，0 元调用费。
+所有像素级操作（SVG场景编辑/追踪/替换/特效/合成/调色/导出）均为本地确定性工具执行，0 元调用费。

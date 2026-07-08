@@ -72,7 +72,7 @@ class SchemaLoader:
         """
         # 从 definitions 中查找对应的 Params 定义
         param_map = {
-            "matting": "MattingParams",
+            "scene_edit": "SceneEditParams",
             "track": "TrackParams",
             "replace": "ReplaceParams",
             "composite": "CompositeParams",

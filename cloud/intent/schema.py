@@ -12,11 +12,11 @@ from pydantic import BaseModel, Field
 
 class WorkflowStep(BaseModel):
     """工作流中的单个步骤"""
-    id: str = Field(..., description="步骤唯一标识，如 step_1、matting_person")
+    id: str = Field(..., description="步骤唯一标识，如 step_1、scene_edit_person")
     action: str = Field(
         ...,
-        description="工具名称，必须是10种工具之一",
-        pattern="^(matting|track|replace|composite|effect|color|subtitle|render|crop|export)$",
+        description="工具名称，必须是 scene_edit, track, replace, composite, effect, color, subtitle, render, crop, export",
+        pattern="^(scene_edit|track|replace|composite|effect|color|subtitle|render|crop|export)$",
     )
     target: str = Field(
         default="all",

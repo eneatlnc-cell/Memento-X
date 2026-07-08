@@ -44,7 +44,7 @@
       "properties": {
         "id": {
           "type": "string",
-          "description": "步骤唯一标识，如 step_1、matting_main。在 depends_on 中引用。",
+          "description": "步骤唯一标识，如 step_1、scene_edit_main。在 depends_on 中引用。",
           "pattern": "^[a-zA-Z0-9_-]+$",
           "minLength": 1,
           "maxLength": 64
@@ -53,7 +53,7 @@
           "type": "string",
           "description": "工具类型，必须是 10 种工具之一",
           "enum": [
-            "matting",
+            "scene_edit",
             "track",
             "replace",
             "composite",
@@ -75,7 +75,7 @@
           "type": "object",
           "description": "工具参数。根据 action 不同，params 结构不同。详见各工具的 params Schema。",
           "oneOf": [
-            {"$ref": "#/definitions/MattingParams"},
+            {"$ref": "#/definitions/SceneEditParams"},
             {"$ref": "#/definitions/TrackParams"},
             {"$ref": "#/definitions/ReplaceParams"},
             {"$ref": "#/definitions/CompositeParams"},
@@ -101,7 +101,7 @@
           "properties": {
             "action": {
               "type": "string",
-              "description": "降级使用哪个工具（如 matting 失败时降级为 approximate）"
+              "description": "降级使用哪个工具（如 scene_edit 失败时降级为 approximate）"
             },
             "params": {
               "type": "object",
@@ -125,14 +125,14 @@
       "additionalProperties": false
     },
 
-    "MattingParams": {
-      "title": "抠图参数",
+    "SceneEditParams": {
+      "title": "SVG场景编辑参数",
       "type": "object",
       "required": [],
       "properties": {
         "threshold": {
           "type": "number",
-          "description": "抠图置信度阈值 (0.0-1.0)，越高越保守",
+          "description": "提取置信度阈值 (0.0-1.0)，越高越保守",
           "minimum": 0.0,
           "maximum": 1.0,
           "default": 0.5
@@ -144,14 +144,14 @@
         },
         "output_format": {
           "type": "string",
-          "enum": ["png", "webp", "matte"],
-          "description": "输出格式：png=透明背景, webp=压缩, matte=灰度遮罩",
-          "default": "png"
+          "enum": ["png", "webp", "scene"],
+          "description": "输出格式：png=透明背景, webp=压缩, scene=结构化场景描述",
+          "default": "scene"
         },
         "model": {
           "type": "string",
           "enum": ["birefnet", "sam2", "auto"],
-          "description": "抠图模型：birefnet=通用, sam2=视频, auto=自动选择",
+          "description": "场景编辑模型：birefnet=通用, sam2=视频, auto=自动选择",
           "default": "auto"
         },
         "dilate_px": {

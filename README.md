@@ -71,7 +71,7 @@ cd local && npm install && npm run dev
 | 环节 | 费用 | 运行位置 |
 |------|------|----------|
 | 意图理解 (通义千问VL-Pro) | ~0.01-0.05元/次 | 云端 |
-| 抠图 (BiRefNet) | 0元 | 本地 |
+| SVG场景编辑 (BiRefNet) | 0元 | 本地 |
 | 追踪 (SAM2-MLX) | 0元 | 本地 |
 | 特效 (ComfyUI) | 0元 | 本地 |
 | 合成 (FFmpeg) | 0元 | 本地 |

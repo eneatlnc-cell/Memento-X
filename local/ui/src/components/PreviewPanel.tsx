@@ -13,7 +13,7 @@ interface Props {
 }
 
 const ACTION_LABELS: Record<string, string> = {
-  matting: "抠图",
+  scene_edit: "SVG场景编辑",
   tracking: "追踪",
   replace: "替换",
   composite: "合成",

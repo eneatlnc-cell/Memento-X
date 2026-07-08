@@ -33,10 +33,10 @@ AI 意图理解 — 核心 API
   "workflow": {
     "steps": [
       {
-        "action": "matting",
+        "action": "scene_edit",
         "target": "person",
         "params": {},
-        "reason": "抠出人物"
+        "reason": "提取人物结构化描述"
       },
       {
         "action": "replace",

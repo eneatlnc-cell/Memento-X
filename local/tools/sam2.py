@@ -23,7 +23,7 @@ async def execute(
         action: 工具动作 (tracking)
         params: {"target": "mask", "fps": 24, "input_video": "..."}
         workspace: 工作目录
-        previous_output: 上一步的输出（遮罩/抠图结果）
+        previous_output: 上一步的输出（遮罩/场景编辑结果）
 
     Returns:
         遮罩序列输出目录

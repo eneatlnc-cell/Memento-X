@@ -137,7 +137,7 @@ class WorkflowExecutor:
         # 注意：如果工具已直接注册（如 crop, composite, export），则不需要别名
         _direct_tools = set(self.registry.list_names())
         _aliases = {
-            "matting": "birefnet",
+            "scene_edit": "birefnet",
             "track": "sam2",
             "replace": "comfyui",
             "effect": "comfyui",
@@ -513,7 +513,7 @@ class WorkflowExecutor:
         目前主要处理 replace 步骤的 asset_id，
         未来可扩展其他步骤的资产引用。
         """
-        if action not in ("replace", "matting"):
+        if action not in ("replace", "scene_edit"):
             return None
 
         asset_id = params.get("asset_id")

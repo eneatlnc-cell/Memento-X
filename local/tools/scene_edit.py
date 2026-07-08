@@ -1,9 +1,9 @@
 """
-BiRefNet 抠图工具接口
+BiRefNet SVG场景编辑工具接口
 
-高精度图像抠图（MIT 协议）
+提取画面中元素的结构化描述（MIT 协议）
 输入：图片路径
-输出：透明背景 PNG / 遮罩
+输出：场景结构描述 / 透明背景 PNG / 遮罩
 """
 import os
 import subprocess
@@ -17,22 +17,22 @@ async def execute(
     previous_output: Optional[str] = None,
 ) -> Optional[str]:
     """
-    执行 BiRefNet 抠图。
+    执行 BiRefNet 场景结构编辑。
 
     Args:
-        action: 工具动作 (matting)
+        action: 工具动作 (scene_edit)
         params: 参数 {"target": "person"|"object"|"foreground"}
         workspace: 工作目录
         previous_output: 上一步的输出文件路径
 
     Returns:
-        抠图结果路径
+        场景编辑结果路径
     """
     input_path = params.get("input_path", previous_output)
     if not input_path or not os.path.exists(input_path):
         raise FileNotFoundError(f"输入文件不存在: {input_path}")
 
-    output_path = os.path.join(workspace, "output", "matting_result.png")
+    output_path = os.path.join(workspace, "output", "scene_edit_result.png")
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
     target = params.get("target", "foreground")
@@ -50,4 +50,4 @@ async def execute(
         subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=300)
         return output_path
     except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"BiRefNet 抠图失败: {e.stderr}")
+        raise RuntimeError(f"BiRefNet 场景编辑失败: {e.stderr}")

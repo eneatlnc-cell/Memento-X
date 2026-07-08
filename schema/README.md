@@ -20,7 +20,7 @@ Memento-X 工作流 JSON 是云端 AI 意图理解引擎与本地调度器之间
 
 | # | action | 工具 | 说明 | 核心参数 |
 |---|--------|------|------|----------|
-| 1 | `matting` | 抠图 | 分离人物/物体与背景 | threshold, model, refine_edge |
+| 1 | `scene_edit` | SVG场景编辑 | 提取画面中元素的结构化描述 | threshold, model, refine_edge |
 | 2 | `track` | 追踪 | 视频帧序列遮罩追踪 | fps, mode, propagate |
 | 3 | `replace` | 替换 | 替换画面中的主体/背景 | source, style, blend_strength |
 | 4 | `composite` | 合成 | 多图层合成为一帧 | layers, blend_mode, output_fps |
@@ -35,7 +35,7 @@ Memento-X 工作流 JSON 是云端 AI 意图理解引擎与本地调度器之间
 
 | 字段 | 类型 | 必需 | 说明 |
 |------|------|------|------|
-| `id` | string | ✅ | 步骤唯一标识，如 `step_1`、`matting_person` |
+| `id` | string | ✅ | 步骤唯一标识，如 `step_1`、`scene_edit_person` |
 | `action` | string | ✅ | 工具类型，必须是 10 种之一 |
 | `target` | string | ✅ | 操作目标：person/background/object/scene/all 等 |
 | `params` | object | ✅ | 工具参数，结构因 action 而异 |
@@ -48,7 +48,7 @@ Memento-X 工作流 JSON 是云端 AI 意图理解引擎与本地调度器之间
 步骤之间通过 `depends_on` 建立 DAG：
 
 ```
-step_1: matting ──────────────┐
+step_1: scene_edit ──────────────┐
                               ├── step_3: replace (person)
                               │         │
 step_2: (无依赖)               │         │
@@ -68,7 +68,7 @@ step_2: (无依赖)               │         │
 
 ## 各工具 params 详细说明
 
-### 1. matting（抠图）
+### 1. scene_edit（SVG场景编辑）
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|

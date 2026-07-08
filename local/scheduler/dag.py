@@ -8,7 +8,7 @@ Memento-X 依赖图构建 + 拓扑排序 + 循环检测
 4. 分组：同一层级的无依赖步骤可并行执行
 
 示例：
-  step_1: matting（无依赖）
+  step_1: scene_edit（无依赖）
   step_2: replace，depends_on: ["step_1"]
   step_3: replace，depends_on: ["step_1"]
   step_4: composite，depends_on: ["step_2", "step_3"]

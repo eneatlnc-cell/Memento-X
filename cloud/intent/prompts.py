@@ -20,7 +20,7 @@ def _build_tool_table() -> str:
         return "（Schema 未加载，无可用工具）"
 
     name_map = {
-        "matting": "抠图", "track": "追踪", "replace": "替换",
+        "scene_edit": "SVG场景编辑", "track": "追踪", "replace": "替换",
         "composite": "合成", "effect": "特效", "color": "调色",
         "subtitle": "字幕", "render": "渲染", "crop": "裁剪", "export": "导出",
     }
@@ -120,7 +120,7 @@ def build_system_prompt() -> str:
 ## 步骤通用字段
 
 每个步骤必须包含以下字段：
-- id: string — 步骤唯一标识，如 "step_1"、"matting_person"。后续步骤通过 depends_on 引用。
+- id: string — 步骤唯一标识，如 "step_1"、"scene_edit_person"。后续步骤通过 depends_on 引用。
 - action: string — 工具名称，必须是 {json.dumps(tool_names, ensure_ascii=False)}
 - target: string — 操作目标，必须是 {json.dumps(target_values, ensure_ascii=False)}
 - params: object — 工具参数（见下方详细说明）
@@ -138,7 +138,7 @@ def build_system_prompt() -> str:
   "steps": [
     {{
       "id": "step_1",
-      "action": "matting",
+      "action": "scene_edit",
       "target": "person",
       "params": {{}},
       "reason": "抠出人物为替换做准备"
@@ -149,8 +149,8 @@ def build_system_prompt() -> str:
 ## 工作流编排规则
 
 1. 始终以 export 步骤结束（除非用户只要求裁剪/调色等中间操作）
-2. 人物替换必须包含：matting → replace（如需追踪则加入 track）
-3. 背景替换可以与人物抠图并行（depends_on 都指向 step_1 的抠图结果）
+2. 人物替换必须包含：scene_edit → replace（如需追踪则加入 track）
+3. 背景替换可以与人物场景编辑并行（depends_on 都指向 step_1 的场景编辑结果）
 4. 特效（effect）和调色（color）在合成（composite）之后
 5. 字幕（subtitle）在调色之后
 6. 裁剪（crop）在合成之前
