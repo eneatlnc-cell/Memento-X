@@ -9,6 +9,8 @@ from cloud.api.intent import router as intent_router
 from cloud.api.account import router as account_router
 from cloud.api.workflow import router as workflow_router
 from cloud.api.status import router as status_router
+from cloud.api.asset import router as asset_router
+from cloud.api.notification import router as notification_router
 
 # 配置日志
 logging.basicConfig(
@@ -35,6 +37,8 @@ app.include_router(intent_router, prefix="/api/v1/intent", tags=["intent"])
 app.include_router(account_router, prefix="/api/v1/account", tags=["account"])
 app.include_router(workflow_router, prefix="/api/v1/workflow", tags=["workflow"])
 app.include_router(status_router, prefix="/api/v1/status", tags=["status"])
+app.include_router(asset_router, prefix="/api/v1/asset", tags=["asset"])
+app.include_router(notification_router, prefix="/api/v1/notification", tags=["notification"])
 
 
 @app.get("/health")

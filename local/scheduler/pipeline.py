@@ -7,7 +7,7 @@ import json
 import logging
 import httpx
 from typing import Optional
-from local.scheduler.executor import Scheduler, WorkflowResult
+from local.scheduler.executor import WorkflowExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -20,13 +20,13 @@ class Pipeline:
     def __init__(self, api_base: str = CLOUD_API_URL, token: str = ""):
         self.api_base = api_base
         self.token = token
-        self.scheduler = Scheduler()
+        self.executor = WorkflowExecutor()
 
     @property
     def _headers(self) -> dict:
         return {"Authorization": f"Bearer {self.token}"} if self.token else {}
 
-    async def process(self, user_input: str, context: Optional[dict] = None) -> WorkflowResult:
+    async def process(self, user_input: str, context: Optional[dict] = None) -> dict:
         """
         完整处理流程：用户输入 → 云端意图理解 → 本地执行
 
@@ -35,7 +35,7 @@ class Pipeline:
             context: 可选的上下文
 
         Returns:
-            WorkflowResult: 执行结果
+            dict: {"success": bool, "results": {...}, "errors": {...}}
         """
         # 1. 发送意图理解请求到云端
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -46,15 +46,15 @@ class Pipeline:
             )
 
             if response.status_code != 200:
-                return WorkflowResult(success=False, error=f"云端请求失败: {response.status_code}")
+                return {"success": False, "error": f"云端请求失败: {response.status_code}"}
 
             intent = response.json()
 
         if not intent.get("success"):
-            return WorkflowResult(
-                success=False,
-                error=intent.get("error", "意图理解失败"),
-            )
+            return {
+                "success": False,
+                "error": intent.get("error", "意图理解失败"),
+            }
 
         workflow = intent.get("workflow", {})
         understood = intent.get("understood", "")
@@ -63,33 +63,24 @@ class Pipeline:
         logger.debug(f"工作流: {json.dumps(workflow, ensure_ascii=False, indent=2)}")
 
         # 2. 本地执行工作流
-        result = await self.scheduler.execute(workflow)
+        result = self.executor.execute(workflow)
 
         # 3. 回传状态到云端
         await self._report_status(result, workflow.get("workflow_id", ""))
 
         return result
 
-    async def _report_status(self, result: WorkflowResult, workflow_id: str):
+    async def _report_status(self, result: dict, workflow_id: str):
         """回传执行状态到云端"""
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 await client.post(
-                    f"{self.api_base}/intent/status",
+                    f"{self.api_base}/status/report",
                     json={
-                        "workflow_id": workflow_id,
-                        "status": "completed" if result.success else "failed",
-                        "steps": [
-                            {
-                                "step_index": s.index,
-                                "action": s.action,
-                                "status": s.status.value,
-                                "output_path": s.output_path,
-                                "error": s.error,
-                                "duration_ms": s.duration_ms,
-                            }
-                            for s in result.steps
-                        ],
+                        "task_id": workflow_id,
+                        "status": result.get("status", "failed"),
+                        "progress": 1.0 if result.get("status") == "success" else result.get("progress", 0),
+                        "error": result.get("errors", {}).get("_workflow", ""),
                     },
                     headers=self._headers,
                 )
