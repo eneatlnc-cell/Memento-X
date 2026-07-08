@@ -7,6 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from cloud.config import settings
 from cloud.api.intent import router as intent_router
 from cloud.api.account import router as account_router
+from cloud.api.workflow import router as workflow_router
+from cloud.api.status import router as status_router
 
 # 配置日志
 logging.basicConfig(
@@ -31,6 +33,8 @@ app.add_middleware(
 
 app.include_router(intent_router, prefix="/api/v1/intent", tags=["intent"])
 app.include_router(account_router, prefix="/api/v1/account", tags=["account"])
+app.include_router(workflow_router, prefix="/api/v1/workflow", tags=["workflow"])
+app.include_router(status_router, prefix="/api/v1/status", tags=["status"])
 
 
 @app.get("/health")

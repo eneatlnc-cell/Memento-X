@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     free_daily_quota: int = 10
     pro_daily_quota: int = 200
 
+    # ── 下发服务 ──
+    dispatch_timeout: int = int(os.getenv("CLOUD_DISPATCH_TIMEOUT", "300"))
+    max_tasks_per_user: int = int(os.getenv("MAX_TASKS_PER_USER", "10"))
+    task_cleanup_days: int = int(os.getenv("TASK_CLEANUP_DAYS", "7"))
+
     model_config = {"env_file": ".env"}
 
 
