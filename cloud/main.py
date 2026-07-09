@@ -1,5 +1,7 @@
 """Memento-X 云端入口 — FastAPI 服务"""
 import logging
+from contextlib import asynccontextmanager
+
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,10 +21,50 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
+logger = logging.getLogger(__name__)
+
+
+# ── 生命周期管理 ──
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    FastAPI 应用生命周期。
+
+    startup: 启动调度器、PushService 后台任务，绑定依赖
+    shutdown: 优雅停止所有后台任务
+    """
+    # ── startup ──
+    from cloud.services.scheduler import task_scheduler
+    from cloud.services.push import push_service
+    from cloud.services.dispatch import dispatch_service
+
+    # 绑定依赖：调度器 ← 推送服务
+    task_scheduler.bind_push(push_service.push_status)
+
+    # 启动后台任务
+    await task_scheduler.start()
+    await push_service.start()
+
+    logger.info("Memento-X Cloud v0.1.0 已启动")
+    logger.info(f"  端点: http://{settings.host}:{settings.port}")
+    logger.info(f"  调度器: 队列 worker + 心跳监控 (30s)")
+    logger.info(f"  PushService: 连接清理循环 (30s ping, 90s ttl)")
+
+    yield
+
+    # ── shutdown ──
+    logger.info("正在关闭 Memento-X Cloud...")
+    await task_scheduler.stop()
+    await push_service.stop()
+    logger.info("Memento-X Cloud 已关闭")
+
+
 app = FastAPI(
     title="Memento-X Cloud",
-    description="AI 意图理解 + 账号系统 — AI 只做意图理解，像素级工作全部由本地确定性工具完成",
-    version="0.1.0",
+    description="AI 意图理解 + 任务调度 + 账号系统 — AI 只做意图理解，像素级工作全部由本地确定性工具完成",
+    version="0.2.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -43,7 +85,15 @@ app.include_router(notification_router, prefix="/api/v1/notification", tags=["no
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "Memento-X Cloud", "version": "0.1.0"}
+    from cloud.services.scheduler import task_scheduler
+    from cloud.services.push import push_service
+    return {
+        "status": "ok",
+        "service": "Memento-X Cloud",
+        "version": "0.2.0",
+        "queue_size": task_scheduler.get_queue_size(),
+        "ws_connections": push_service.get_connection_count(),
+    }
 
 
 if __name__ == "__main__":

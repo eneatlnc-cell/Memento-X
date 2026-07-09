@@ -1,129 +1,119 @@
 """
-Memento-X 云端状态查询 API
+Memento-X 云端状态 API
 
 端点：
-- GET  /api/v1/status/ws      WebSocket 状态推送
-- POST /api/v1/status/report  接收本地服务上报的状态
+- WS   /api/v1/status/ws          WebSocket 实时状态推送
+- POST /api/v1/status/report      本地引擎状态上报
+- GET  /api/v1/status/connections  WebSocket 连接数
+- GET  /api/v1/status/local       本地引擎注册列表
 """
+import json
 import logging
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException, Request
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Request
 
 from cloud.services.push import push_service
 from cloud.services.dispatch import dispatch_service
-from cloud.models.workflow_task import StatusReport, TaskStatus
-from cloud.account.auth import get_current_user
+from cloud.services.scheduler import task_scheduler
+from cloud.models.workflow_task import StatusReport
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-# ── WebSocket 状态推送 ──
+# ── WebSocket ──
 
 @router.websocket("/ws")
-async def websocket_status(
-    websocket: WebSocket,
-    token: str = "",
-):
+async def websocket_status(websocket: WebSocket, token: str = ""):
     """
-    云端 WebSocket 状态推送。
+    WebSocket 实时状态推送。
 
-    客户端通过此端点订阅任务状态更新。
-
-    连接参数：
-        token: JWT 认证令牌（query parameter）
+    连接参数: ?token=<user_id>
+    协议:
+        client → server: "ping" → server 回复 "pong"
+        server → client: JSON 消息（任务状态变更、本地引擎状态变更）
     """
-    # 简易认证：从 token 中提取 user_id
-    # 生产环境应使用 JWT 验证
     user_id = token or "anonymous"
-
     await push_service.connect(websocket, user_id)
 
     try:
         while True:
             data = await websocket.receive_text()
             if data == "ping":
-                await websocket.send_text("pong")
+                await push_service.handle_ping(websocket, user_id)
+            elif data.startswith("{"):
+                # JSON 消息（预留扩展）
+                pass
+            else:
+                await websocket.send_text(f"unknown: {data}")
     except WebSocketDisconnect:
-        push_service.disconnect(websocket, user_id)
+        logger.info(f"WebSocket 客户端断开: user={user_id}")
     except Exception:
+        logger.exception(f"WebSocket 异常: user={user_id}")
+    finally:
         push_service.disconnect(websocket, user_id)
 
 
 # ── 状态上报 ──
 
 @router.post("/report")
-async def report_status(
-    request: Request,
-):
+async def report_status(request: Request):
     """
-    接收本地服务上报的任务状态。
+    本地引擎上报任务状态。
 
-    本地调度器在每一步执行后，通过此接口向云端回传状态。
-
-    Request Body:
-        {
-            "task_id": "task_xxx",
-            "status": "running",
-            "step_id": "step_1",
-            "step_status": "completed",
-            "progress": 0.25,
-            "error": null,
-            "result": null
-        }
+    请求体: StatusReport
+    请求来源: 本地 Memento-X local 引擎
     """
+    body = await request.json()
+    report = StatusReport(**body)
+
+    # 更新任务状态
+    from cloud.models.workflow_task import TaskStatus
     try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="请求体必须是有效的 JSON")
+        status = TaskStatus(report.status)
+    except ValueError:
+        status = TaskStatus.RUNNING
 
-    task_id = body.get("task_id")
-    if not task_id:
-        raise HTTPException(status_code=400, detail="缺少 task_id")
+    dispatch_service.update_task_status(
+        report.task_id,
+        status,
+        current_step=report.step_id,
+        step_status=report.step_status,
+        progress=report.progress,
+        error=report.error,
+        result=report.result,
+    )
 
-    status = body.get("status", "unknown")
-    step_id = body.get("step_id")
-    step_status = body.get("step_status")
-    progress = body.get("progress")
-    error = body.get("error")
-    result = body.get("result")
+    logger.info(f"状态上报: {report.task_id} → {report.status} (progress={report.progress})")
+    return {"status": "ok", "task_id": report.task_id}
 
-    # 更新云端任务状态
-    task = dispatch_service.get_task(task_id)
-    if task:
-        try:
-            task.status = TaskStatus(status) if status in TaskStatus.__members__ else task.status
-        except (ValueError, KeyError):
-            pass
-        task.current_step = step_id or task.current_step
-        task.step_status = step_status or task.step_status
-        task.progress = progress or task.progress
-        task.error = error or task.error
-        task.result = result or task.result
 
-    # 推送到订阅该用户的客户端
-    user_id = task.user_id if task else "anonymous"
-    await push_service.push_status(user_id, {
-        "task_id": task_id,
-        "status": status,
-        "step_id": step_id,
-        "step_status": step_status,
-        "progress": progress,
-        "error": error,
-    })
-
-    logger.debug(f"状态已接收: {task_id} → {status}")
-
-    return {
-        "received": True,
-        "task_id": task_id,
-        "status": status,
-    }
-
+# ── 查询 ──
 
 @router.get("/connections")
 async def get_connection_count():
-    """获取当前 WebSocket 连接数"""
+    """获取 WebSocket 连接数"""
     return {
-        "connections": push_service.get_connection_count(),
+        "total": push_service.get_connection_count(),
+    }
+
+
+@router.get("/local")
+async def get_local_registrations():
+    """获取所有本地引擎注册列表"""
+    regs = task_scheduler.get_all_registrations()
+    return {
+        "total": len(regs),
+        "registrations": [
+            {
+                "user_id": r.user_id,
+                "host": r.host,
+                "port": r.port,
+                "version": r.version,
+                "status": r.status,
+                "last_heartbeat": r.last_heartbeat.isoformat(),
+                "registered_at": r.registered_at.isoformat(),
+            }
+            for r in regs.values()
+        ],
     }
