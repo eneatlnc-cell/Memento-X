@@ -122,7 +122,7 @@ class ExportTool(Tool):
 
         # H.264/265 特定选项
         if format_type in ("h264", "h265"):
-            if pixel_format == "yuv420p":
+            if pix_fmt == "yuv420p":
                 pass  # 默认
 
         cmd.append(output_path)
