@@ -1,4 +1,6 @@
-"""Memento-X 云端配置"""
+"""
+Memento-X 云端配置
+"""
 import os
 from pathlib import Path
 from pydantic_settings import BaseSettings
@@ -46,6 +48,18 @@ class Settings(BaseSettings):
     dispatch_timeout: int = int(os.getenv("CLOUD_DISPATCH_TIMEOUT", "300"))
     max_tasks_per_user: int = int(os.getenv("MAX_TASKS_PER_USER", "10"))
     task_cleanup_days: int = int(os.getenv("TASK_CLEANUP_DAYS", "7"))
+
+    # ── 阿里云 OSS（S3 兼容模式）──
+    oss_endpoint: str = os.getenv(
+        "OSS_ENDPOINT",
+        "https://oss-cn-hangzhou.aliyuncs.com",
+    )
+    oss_bucket: str = os.getenv("OSS_BUCKET", "memento-assets")
+    oss_region: str = os.getenv("OSS_REGION", "oss-cn-hangzhou")
+    oss_access_key_id: str = os.getenv("OSS_ACCESS_KEY_ID", "")
+    oss_access_key_secret: str = os.getenv("OSS_ACCESS_KEY_SECRET", "")
+    oss_thumbnail_prefix: str = os.getenv("OSS_THUMBNAIL_PREFIX", "thumbnails/")
+    oss_presigned_url_expire: int = int(os.getenv("OSS_PRESIGNED_URL_EXPIRE", "3600"))
 
     model_config = {"env_file": ".env"}
 
