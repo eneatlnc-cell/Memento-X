@@ -3,23 +3,29 @@ Memento-X 用量配额管理
 
 免费用户：每日 10 次意图理解
 Pro 用户：每日 200 次意图理解
+
+数据持久化到 PostgreSQL quotas 表，重启不丢失。
 """
-from datetime import datetime, date
+import logging
+from datetime import date
 from cloud.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class QuotaManager:
-    """配额管理器（简化版，生产环境需接入 Redis/PostgreSQL）"""
-
-    def __init__(self):
-        self._daily_usage: dict[str, dict[str, int]] = {}  # user_id -> {date_str -> count}
+    """配额管理器（PostgreSQL 持久化）"""
 
     async def get_remaining(self, user_id: str, tier: str = "free") -> int:
         """获取用户今日剩余配额"""
-        today = str(date.today())
-        usage = self._daily_usage.get(user_id, {}).get(today, 0)
-        limit = settings.pro_daily_quota if tier == "pro" else settings.free_daily_quota
-        return max(0, limit - usage)
+        from cloud.db.engine import async_session_factory
+        from cloud.db.crud import quota_get_today
+
+        async with async_session_factory() as db:
+            quota = await quota_get_today(db, user_id)
+            usage = quota.count
+            limit = settings.pro_daily_quota if tier == "pro" else settings.free_daily_quota
+            return max(0, limit - usage)
 
     async def check(self, user_id: str, tier: str = "free") -> bool:
         """检查用户是否还有配额"""
@@ -28,16 +34,21 @@ class QuotaManager:
 
     async def consume(self, user_id: str) -> bool:
         """消耗一次配额，返回是否成功"""
-        today = str(date.today())
-        if user_id not in self._daily_usage:
-            self._daily_usage[user_id] = {}
-        self._daily_usage[user_id][today] = self._daily_usage[user_id].get(today, 0) + 1
-        return True
+        from cloud.db.engine import async_session_factory
+        from cloud.db.crud import quota_increment
+
+        async with async_session_factory() as db:
+            await quota_increment(db, user_id)
+            return True
 
     async def get_usage_today(self, user_id: str) -> int:
         """获取用户今日已使用次数"""
-        today = str(date.today())
-        return self._daily_usage.get(user_id, {}).get(today, 0)
+        from cloud.db.engine import async_session_factory
+        from cloud.db.crud import quota_get_today
+
+        async with async_session_factory() as db:
+            quota = await quota_get_today(db, user_id)
+            return quota.count
 
 
 # 全局配额管理器

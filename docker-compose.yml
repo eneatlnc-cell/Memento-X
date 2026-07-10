@@ -1,0 +1,60 @@
+# Memento-X Cloud — 开发环境 docker-compose
+#
+# 启动：
+#   docker-compose up -d
+#
+# 查看日志：
+#   docker-compose logs -f cloud
+#
+# 停止：
+#   docker-compose down
+
+version: "3.9"
+
+services:
+  # ── PostgreSQL 数据库 ──
+  postgres:
+    image: postgres:16-alpine
+    container_name: memento-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: memento
+      POSTGRES_PASSWORD: memento_dev
+      POSTGRES_DB: memento
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U memento"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Memento-X Cloud 中枢 ──
+  cloud:
+    build: .
+    container_name: memento-cloud
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://memento:memento_dev@postgres:5432/memento
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-in-dev}
+      OSS_ENDPOINT: ${OSS_ENDPOINT:-https://oss-cn-hangzhou.aliyuncs.com}
+      OSS_BUCKET: ${OSS_BUCKET:-memento-assets}
+      OSS_REGION: ${OSS_REGION:-oss-cn-hangzhou}
+      OSS_ACCESS_KEY_ID: ${OSS_ACCESS_KEY_ID:-}
+      OSS_ACCESS_KEY_SECRET: ${OSS_ACCESS_KEY_SECRET:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  pgdata:

@@ -6,14 +6,24 @@ Memento-X 云端素材元数据 API
 - POST /api/v1/asset/upload-url 获取预签名上传 URL（缩略图）
 - GET  /api/v1/asset/list        获取素材列表
 - GET  /api/v1/asset/{asset_id}  获取素材详情
+
+数据持久化到 PostgreSQL assets 表，重启不丢失。
 """
 import uuid
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, HTTPException
+
 from pydantic import BaseModel, Field
 
+from cloud.db.engine import async_session_factory
+from cloud.db.crud import (
+    asset_create,
+    asset_get_by_id,
+    asset_get_all,
+    asset_update_thumbnail,
+)
 from cloud.services.oss import (
     generate_presigned_upload_url,
     generate_thumbnail_key,
@@ -25,9 +35,6 @@ from cloud.services.oss import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-# ── 内存存储（生产环境接入 PostgreSQL）──
-_assets: dict[str, dict] = {}
 
 
 # ── 请求/响应模型 ──
@@ -88,18 +95,17 @@ async def upload_metadata(req: AssetMetadataRequest):
     """
     asset_id = f"asset_{uuid.uuid4().hex[:12]}"
 
-    _assets[asset_id] = {
-        "asset_id": asset_id,
-        "name": req.name,
-        "type": req.type,
-        "size_bytes": req.size_bytes,
-        "duration": req.duration,
-        "local_path": req.local_path,
-        "status": "ready",
-        "is_result": False,
-        "thumbnail_url": None,
-        "uploaded_at": int(datetime.utcnow().timestamp()),
-    }
+    async with async_session_factory() as db:
+        await asset_create(
+            db,
+            asset_id=asset_id,
+            user_id="anonymous",  # 后续接入认证后替换
+            name=req.name,
+            type=req.type,
+            size_bytes=req.size_bytes,
+            duration=req.duration,
+            local_path=req.local_path,
+        )
 
     logger.info(f"素材元数据已注册: {asset_id} ({req.name})")
     return AssetMetadataResponse(asset_id=asset_id)
@@ -115,9 +121,10 @@ async def get_upload_url(req: UploadUrlRequest):
 
     架构约束：仅用于缩略图上传，不用于视频文件。
     """
-    # 验证 asset_id 存在
-    if req.asset_id not in _assets:
-        raise HTTPException(status_code=404, detail="素材不存在")
+    async with async_session_factory() as db:
+        asset = await asset_get_by_id(db, req.asset_id)
+        if not asset:
+            raise HTTPException(status_code=404, detail="素材不存在")
 
     object_key = generate_thumbnail_key(req.asset_id, req.file_extension)
     upload_url = generate_presigned_upload_url(
@@ -126,9 +133,8 @@ async def get_upload_url(req: UploadUrlRequest):
     )
     thumbnail_url = get_thumbnail_url(object_key)
 
-    # 更新素材记录
-    _assets[req.asset_id]["thumbnail_url"] = thumbnail_url
-    _assets[req.asset_id]["thumbnail_key"] = object_key
+    async with async_session_factory() as db:
+        await asset_update_thumbnail(db, req.asset_id, thumbnail_url, object_key)
 
     logger.info(f"预签名上传 URL 已生成: {req.asset_id} → {object_key}")
     return UploadUrlResponse(
@@ -142,35 +148,39 @@ async def get_upload_url(req: UploadUrlRequest):
 @router.get("/list")
 async def list_assets():
     """获取素材列表"""
-    items = [
+    async with async_session_factory() as db:
+        assets = await asset_get_all(db)
+
+    return [
         AssetItem(
-            asset_id=a["asset_id"],
-            name=a["name"],
-            type=a["type"],
-            duration=a.get("duration"),
-            thumbnail_url=a.get("thumbnail_url"),
-            status=a.get("status", "ready"),
-            is_result=a.get("is_result", False),
-            uploaded_at=a.get("uploaded_at", 0),
+            asset_id=a.asset_id,
+            name=a.name,
+            type=a.type,
+            duration=a.duration,
+            thumbnail_url=a.thumbnail_url,
+            status=a.status,
+            is_result=a.is_result,
+            uploaded_at=int(a.created_at.timestamp()),
         )
-        for a in _assets.values()
+        for a in assets
     ]
-    return items
 
 
 @router.get("/{asset_id}")
 async def get_asset(asset_id: str):
     """获取素材详情"""
-    asset = _assets.get(asset_id)
-    if not asset:
-        raise HTTPException(status_code=404, detail="素材不存在")
+    async with async_session_factory() as db:
+        asset = await asset_get_by_id(db, asset_id)
+        if not asset:
+            raise HTTPException(status_code=404, detail="素材不存在")
+
     return AssetItem(
-        asset_id=asset["asset_id"],
-        name=asset["name"],
-        type=asset["type"],
-        duration=asset.get("duration"),
-        thumbnail_url=asset.get("thumbnail_url"),
-        status=asset.get("status", "ready"),
-        is_result=asset.get("is_result", False),
-        uploaded_at=asset.get("uploaded_at", 0),
+        asset_id=asset.asset_id,
+        name=asset.name,
+        type=asset.type,
+        duration=asset.duration,
+        thumbnail_url=asset.thumbnail_url,
+        status=asset.status,
+        is_result=asset.is_result,
+        uploaded_at=int(asset.created_at.timestamp()),
     )

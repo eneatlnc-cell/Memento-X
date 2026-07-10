@@ -50,28 +50,38 @@ async def get_current_user(authorization: str = Header(...)) -> str:
     return user_id
 
 
-# ── 用户注册/登录（简化版，生产环境需接入数据库） ──
-
-# 临时内存存储（生产环境替换为 PostgreSQL）
-_users: dict = {}
-_passwords: dict = {}
+# ── 用户注册/登录（PostgreSQL 持久化）──
 
 
 async def register_user(email: str, password: str) -> Optional[str]:
-    """注册新用户，返回 user_id"""
-    if email in _users:
-        return None
-    user_id = f"user_{len(_users) + 1}"
-    _users[email] = user_id
-    _passwords[user_id] = hash_password(password)
-    return user_id
+    """
+    注册新用户，返回 user_id。
+
+    使用数据库持久化，重启不丢失数据。
+    """
+    from cloud.db.engine import async_session_factory
+    from cloud.db.crud import user_create
+
+    async with async_session_factory() as db:
+        user = await user_create(db, email, hash_password(password))
+        if user is None:
+            return None
+        return user.id
 
 
 async def authenticate_user(email: str, password: str) -> Optional[str]:
-    """验证用户凭据，返回 user_id"""
-    user_id = _users.get(email)
-    if not user_id:
-        return None
-    if not verify_password(password, _passwords.get(user_id, "")):
-        return None
-    return user_id
+    """
+    验证用户凭据，返回 user_id。
+
+    从数据库查询用户并验证密码哈希。
+    """
+    from cloud.db.engine import async_session_factory
+    from cloud.db.crud import user_get_by_email
+
+    async with async_session_factory() as db:
+        user = await user_get_by_email(db, email)
+        if not user:
+            return None
+        if not verify_password(password, user.password_hash):
+            return None
+        return user.id
