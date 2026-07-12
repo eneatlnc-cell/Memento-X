@@ -12,7 +12,7 @@ from sqlalchemy import select, update, delete, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cloud.db.models import (
-    User, Launcher, Task, Asset, Quota,
+    User, Launcher, Task, Quota,
     DatasetRun, NodeAnnotation,
 )
 
@@ -229,42 +229,6 @@ async def task_fail(db: AsyncSession, task_id: str, error: str) -> None:
             error=error,
             completed_at=datetime.now(timezone.utc),
         )
-    )
-    await db.commit()
-
-
-# ════════════════════════════════════════════════════════════════════
-# Asset CRUD
-# ════════════════════════════════════════════════════════════════════
-
-async def asset_create(db: AsyncSession, **kwargs) -> Asset:
-    asset = Asset(**kwargs)
-    db.add(asset)
-    await db.commit()
-    await db.refresh(asset)
-    return asset
-
-
-async def asset_get_by_id(db: AsyncSession, asset_id: str) -> Asset | None:
-    result = await db.execute(
-        select(Asset).where(Asset.asset_id == asset_id)
-    )
-    return result.scalar_one_or_none()
-
-
-async def asset_get_all(db: AsyncSession) -> List[Asset]:
-    result = await db.execute(select(Asset).order_by(Asset.created_at.desc()))
-    return list(result.scalars().all())
-
-
-async def asset_update_thumbnail(
-    db: AsyncSession, asset_id: str,
-    thumbnail_url: str, thumbnail_key: str,
-) -> None:
-    await db.execute(
-        update(Asset)
-        .where(Asset.asset_id == asset_id)
-        .values(thumbnail_url=thumbnail_url, thumbnail_key=thumbnail_key)
     )
     await db.commit()
 

@@ -5,7 +5,6 @@ Memento-X SQLAlchemy ORM 模型
 - User: 用户账号
 - Launcher: 本地引擎注册
 - Task: 工作流任务
-- Asset: 素材元数据
 - Quota: 每日配额
 - DatasetRun: 数据集运行记录
 - NodeAnnotation: 节点标注数据
@@ -14,11 +13,10 @@ import uuid
 from datetime import datetime, date, timezone
 
 from sqlalchemy import (
-    Column, String, Integer, Float, Boolean, Date, DateTime, Text,
+    Column, String, Integer, Float, Date, DateTime, Text,
     ForeignKey, JSON, UniqueConstraint, Index,
 )
 from sqlalchemy.orm import relationship
-from sqlalchemy.dialects.postgresql import UUID
 
 from cloud.db.engine import Base
 
@@ -47,7 +45,6 @@ class User(Base):
 
     launchers   = relationship("Launcher", back_populates="user", cascade="all, delete-orphan")
     tasks       = relationship("Task", back_populates="user", cascade="all, delete-orphan")
-    assets      = relationship("Asset", back_populates="user", cascade="all, delete-orphan")
     quotas      = relationship("Quota", back_populates="user", cascade="all, delete-orphan")
     dataset_runs = relationship("DatasetRun", back_populates="user", cascade="all, delete-orphan")
 
@@ -108,30 +105,6 @@ class Task(Base):
         Index("ix_tasks_user_status", "user_id", "status"),
         Index("ix_tasks_created", "created_at"),
     )
-
-
-# ────────────────────────────────────────────────────────────────────
-# Asset — 素材元数据
-# ────────────────────────────────────────────────────────────────────
-
-class Asset(Base):
-    __tablename__ = "assets"
-
-    id            = Column(String(32), primary_key=True, default=_new_uuid)
-    asset_id      = Column(String(64), unique=True, nullable=False, index=True)
-    user_id       = Column(String(32), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    name          = Column(String(255), nullable=False)
-    type          = Column(String(20), nullable=False)  # image / video
-    size_bytes    = Column(Integer, nullable=False)
-    duration      = Column(Float, nullable=True)
-    local_path    = Column(String(1024), nullable=False)
-    status        = Column(String(20), default="ready", nullable=False)
-    is_result     = Column(Boolean, default=False, nullable=False)
-    thumbnail_url = Column(String(1024), nullable=True)
-    thumbnail_key = Column(String(512), nullable=True)
-    created_at    = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
-
-    user = relationship("User", back_populates="assets")
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -217,4 +190,4 @@ class NodeAnnotation(Base):
 # all_models 列表 — 确保 init_db() 可导入所有模型
 # ────────────────────────────────────────────────────────────────────
 
-all_models = [User, Launcher, Task, Asset, Quota, DatasetRun, NodeAnnotation]
+all_models = [User, Launcher, Task, Quota, DatasetRun, NodeAnnotation]
