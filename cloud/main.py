@@ -54,7 +54,7 @@ async def lifespan(app: FastAPI):
     await task_scheduler.start()
     await push_service.start()
 
-    logger.info("Memento-X Cloud v0.3.0 已启动")
+    logger.info("Memento-X Cloud v0.2.0 已启动")
     logger.info(f"  端点: http://{settings.host}:{settings.port}")
     logger.info(f"  调度器: 队列 worker + 心跳监控 (30s) + 主动轮询")
     logger.info(f"  PushService: 连接清理循环 (30s ping, 90s ttl)")

@@ -31,3 +31,5 @@ cloud/*.sqlite3
 local/downloads/
 local/output/
 local/tools_cache/
+# Sensitive files
+.env.production
